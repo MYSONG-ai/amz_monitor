@@ -78,5 +78,5 @@ On the local sales forecast machine, sync from the Germany server with:
   -Date YYYY-MM-DD `
   -HostName 3.65.207.109 `
   -UserName ubuntu `
-  -RemotePriceCsv /home/ubuntu/tv-store-monitor/output/prices/date=YYYY-MM-DD/prices.csv
+  -RemotePriceCsv /home/ubuntu/amz_monitor/output/prices/date=YYYY-MM-DD/prices.csv
 ```
