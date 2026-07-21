@@ -46,6 +46,9 @@ Create `.env`:
 FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_app_secret
 FEISHU_CHAT_IDS=your_chat_id
+FEISHU_PRICE_SHEET_TOKEN=DLJMs1Q2Pht7xmtPxmPcmKhCnjd
+FEISHU_PRICE_SHEET_ID=300dee
+FEISHU_PRICE_SHEET_AS=user
 ```
 
 Then run:
@@ -81,4 +84,22 @@ On the local sales forecast machine, sync from the Germany server with:
   -HostName 3.65.207.109 `
   -UserName ubuntu `
   -RemotePriceCsv /home/ubuntu/amz_monitor/output/prices/prices.csv
+```
+
+## Feishu Price Calendar Write
+
+After each successful monitor run, the script also tries to write the latest prices to the Feishu price calendar sheet:
+
+```text
+https://rcne7vk00ucv.feishu.cn/wiki/EPcHwidX7iitmikzGjBcxl5WnDg
+```
+
+It matches rows by ASIN in column D, finds the next price snapshot column from column I onward, writes the capture time in row 2, and writes prices from row 3 down. If Lark authorization or network access fails, the monitor logs the error but still keeps the local CSV/XLSX outputs and Feishu chat report.
+
+The server needs `lark-cli` installed and authorized for the configured identity. For the default `FEISHU_PRICE_SHEET_AS=user`, run the monitor once and, if it reports a missing sheet scope, run the exact `lark-cli auth login --scope "..."` command shown in the error on the server.
+
+```bash
+cd /home/ubuntu/amz_monitor
+source .venv/bin/activate
+python3 tv_monitor.py
 ```

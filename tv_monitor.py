@@ -1,11 +1,15 @@
 import os
 import re
+import csv
 import json
 import pytz
 import queue
 import random
+import shutil
 import logging
+import subprocess
 import time
+from io import StringIO
 from pathlib import Path
 from datetime import datetime
 import concurrent.futures
@@ -57,6 +61,11 @@ FEISHU_CHAT_IDS = [
     if chat_id.strip()
 ]
 NO_FEISHU = os.environ.get("NO_FEISHU", "").lower() in ("1", "true", "yes", "on")
+
+FEISHU_PRICE_SHEET_TOKEN = os.environ.get("FEISHU_PRICE_SHEET_TOKEN", "DLJMs1Q2Pht7xmtPxmPcmKhCnjd")
+FEISHU_PRICE_SHEET_ID = os.environ.get("FEISHU_PRICE_SHEET_ID", "300dee")
+FEISHU_PRICE_SHEET_AS = os.environ.get("FEISHU_PRICE_SHEET_AS", "user")
+FEISHU_PRICE_FIRST_PRICE_COLUMN = os.environ.get("FEISHU_PRICE_FIRST_PRICE_COLUMN", "I")
 
 # ===================== 爬虫配置 =====================
 USER_AGENTS = [
@@ -426,6 +435,193 @@ def update_cumulative_prices(path: Path, today_df: pd.DataFrame, date_str: str) 
         combined_df = today_df
     combined_df = combined_df.sort_values(["date", "captured_at", "model_group", "model_name", "asin"]).reset_index(drop=True)
     combined_df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def write_prices_to_feishu_sheet(df: pd.DataFrame, captured_at: datetime) -> None:
+    if not FEISHU_PRICE_SHEET_TOKEN or not FEISHU_PRICE_SHEET_ID:
+        logger.info("Skip Feishu price sheet write: token or sheet id is not configured")
+        return
+
+    lark_cli = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
+    if not lark_cli:
+        raise RuntimeError("lark-cli not found; cannot write price calendar sheet")
+
+    workbook = run_lark_cli_json(
+        lark_cli,
+        [
+            "sheets",
+            "+workbook-info",
+            "--as",
+            FEISHU_PRICE_SHEET_AS,
+            "--spreadsheet-token",
+            FEISHU_PRICE_SHEET_TOKEN,
+            "--format",
+            "json",
+        ],
+    )
+    sheet_info = next(
+        (sheet for sheet in workbook.get("data", {}).get("sheets", []) if sheet.get("sheet_id") == FEISHU_PRICE_SHEET_ID),
+        None,
+    )
+    if not sheet_info:
+        raise RuntimeError(f"sheet_id {FEISHU_PRICE_SHEET_ID} not found in workbook")
+
+    row_count = int(sheet_info.get("row_count") or 200)
+    col_count = int(sheet_info.get("column_count") or 21)
+    last_col = column_number_to_letter(max(col_count, column_letter_to_number(FEISHU_PRICE_FIRST_PRICE_COLUMN)))
+    table = run_lark_cli_json(
+        lark_cli,
+        [
+            "sheets",
+            "+csv-get",
+            "--as",
+            FEISHU_PRICE_SHEET_AS,
+            "--spreadsheet-token",
+            FEISHU_PRICE_SHEET_TOKEN,
+            "--sheet-id",
+            FEISHU_PRICE_SHEET_ID,
+            "--range",
+            f"A2:{last_col}{row_count}",
+            "--format",
+            "json",
+        ],
+    )
+
+    rows = parse_annotated_csv(table.get("data", {}).get("annotated_csv", ""))
+    if not rows:
+        raise RuntimeError("price calendar sheet returned no rows")
+
+    header_row = rows[0]["values"]
+    first_price_index = column_letter_to_number(FEISHU_PRICE_FIRST_PRICE_COLUMN) - 1
+    next_col_index = next_price_column_index(header_row, first_price_index)
+    next_col = column_number_to_letter(next_col_index + 1)
+
+    price_by_asin = build_price_by_asin(df)
+    data_rows = [row for row in rows[1:] if len(row["values"]) >= 4 and clean_cell(row["values"][3])]
+    if not data_rows:
+        raise RuntimeError("price calendar sheet has no ASIN rows to update")
+
+    max_sheet_row = max(row["row_number"] for row in data_rows)
+    values_by_row = {row["row_number"]: price_by_asin.get(clean_cell(row["values"][3]), "") for row in data_rows}
+    capture_label = format_capture_label(captured_at)
+    column_values = [capture_label] + [values_by_row.get(row_number, "") for row_number in range(3, max_sheet_row + 1)]
+    csv_payload = make_single_column_csv(column_values)
+
+    result = run_lark_cli_json(
+        lark_cli,
+        [
+            "sheets",
+            "+csv-put",
+            "--as",
+            FEISHU_PRICE_SHEET_AS,
+            "--spreadsheet-token",
+            FEISHU_PRICE_SHEET_TOKEN,
+            "--sheet-id",
+            FEISHU_PRICE_SHEET_ID,
+            "--start-cell",
+            f"{next_col}2",
+            "--csv",
+            csv_payload,
+            "--format",
+            "json",
+        ],
+    )
+    verify = run_lark_cli_json(
+        lark_cli,
+        [
+            "sheets",
+            "+csv-get",
+            "--as",
+            FEISHU_PRICE_SHEET_AS,
+            "--spreadsheet-token",
+            FEISHU_PRICE_SHEET_TOKEN,
+            "--sheet-id",
+            FEISHU_PRICE_SHEET_ID,
+            "--range",
+            f"{next_col}2:{next_col}2",
+            "--format",
+            "json",
+        ],
+    )
+    if capture_label not in verify.get("data", {}).get("annotated_csv", ""):
+        raise RuntimeError(f"Feishu price sheet write verification failed for {next_col}2")
+    updated = result.get("data", {}).get("updated_cells_count", 0)
+    logger.info(f"Wrote Feishu price sheet column {next_col} with {updated} cells")
+
+
+def run_lark_cli_json(lark_cli: str, args: list[str]) -> dict:
+    proc = subprocess.run([lark_cli, *args], capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"lark-cli failed ({proc.returncode}): {proc.stderr or proc.stdout}")
+    return json.loads(proc.stdout)
+
+
+def parse_annotated_csv(annotated_csv: str) -> list[dict]:
+    rows = []
+    for line in annotated_csv.splitlines():
+        match = re.match(r"^\[row=(\d+)\]\s?(.*)$", line)
+        if not match:
+            continue
+        values = next(csv.reader([match.group(2)]))
+        rows.append({"row_number": int(match.group(1)), "values": values})
+    return rows
+
+
+def build_price_by_asin(df: pd.DataFrame) -> dict[str, object]:
+    url_col = SCRAPER_CONFIG["url_column"]
+    price_col = SCRAPER_CONFIG["price_column"]
+    stock_col = price_col + 2
+    price_by_asin = {}
+    for _, row in df.iterrows():
+        url = normalize_url(row.iloc[url_col]) if url_col < len(row) else ""
+        asin = extract_asin(url)
+        if not asin:
+            continue
+        price_text = clean_cell(row.iloc[price_col]) if price_col < len(row) else ""
+        _currency, price_amount = parse_price_amount(price_text)
+        if price_amount is not None:
+            price_by_asin[asin] = price_amount
+            continue
+        stock = clean_cell(row.iloc[stock_col]) if stock_col < len(row) else ""
+        price_by_asin[asin] = stock or price_text
+    return price_by_asin
+
+
+def next_price_column_index(header_row: list[str], first_price_index: int) -> int:
+    last_seen = first_price_index - 1
+    for index in range(first_price_index, len(header_row)):
+        if clean_cell(header_row[index]):
+            last_seen = index
+    return last_seen + 1
+
+
+def make_single_column_csv(values: list[object]) -> str:
+    buffer = StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    for value in values:
+        writer.writerow([value])
+    return buffer.getvalue().rstrip("\n")
+
+
+def format_capture_label(captured_at: datetime) -> str:
+    return f"{captured_at.year}/{captured_at.month}/{captured_at.day} {captured_at.hour}:{captured_at.minute:02d}"
+
+
+def column_letter_to_number(column: str) -> int:
+    number = 0
+    for char in column.upper():
+        if not ("A" <= char <= "Z"):
+            continue
+        number = number * 26 + ord(char) - ord("A") + 1
+    return number
+
+
+def column_number_to_letter(number: int) -> str:
+    letters = []
+    while number > 0:
+        number, remainder = divmod(number - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    return "".join(reversed(letters))
 
 # ===================== 浏览器 =====================
 def get_chrome_options() -> Options:
@@ -1050,9 +1246,14 @@ def main():
 
     elapsed = (time.time() - start_time) / 60
     results = build_results_from_df(scraper.df)
-    excel_path, price_csv_path = export_price_outputs(scraper.df, datetime.now())
+    captured_at = datetime.now()
+    excel_path, price_csv_path = export_price_outputs(scraper.df, captured_at)
     logger.info(f"Saved monitor workbook: {excel_path}")
     logger.info(f"Saved standard price CSV: {price_csv_path}")
+    try:
+        write_prices_to_feishu_sheet(scraper.df, captured_at)
+    except Exception:
+        logger.exception("Failed to write Feishu price calendar sheet")
 
     title = f"德国 TV 巡店 {datetime.now().strftime('%Y/%m/%d %H:%M')}"
     send_feishu_report(results, title, elapsed)
