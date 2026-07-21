@@ -54,3 +54,29 @@ Then run:
 source .venv/bin/activate
 python3 tv_monitor.py
 ```
+
+## Price CSV Output
+
+Each successful run now writes local output files:
+
+```text
+output/latest.xlsx
+output/prices/date=YYYY-MM-DD/prices.csv
+output/prices/date=YYYY-MM-DD/prices.done
+```
+
+`prices.csv` is the standard file for the sales forecast project. Important columns:
+
+```text
+date,captured_at,marketplace,model_group,model_name,asin,url,price_text,price_amount,currency,seller,stock,delivery,basis_price,deal_tag
+```
+
+On the local sales forecast machine, sync from the Germany server with:
+
+```powershell
+.\scripts\sync_price_from_germany.ps1 `
+  -Date YYYY-MM-DD `
+  -HostName 3.65.207.109 `
+  -UserName ubuntu `
+  -RemotePriceCsv /home/ubuntu/tv-store-monitor/output/prices/date=YYYY-MM-DD/prices.csv
+```

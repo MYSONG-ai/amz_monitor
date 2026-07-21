@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # ===================== 路径配置 =====================
 SCRIPT_DIR  = Path(__file__).parent
 INPUT_FILE  = SCRIPT_DIR / "input" / "de_xiaomi_TV.xlsx"
+OUTPUT_DIR  = SCRIPT_DIR / "output"
 
 COUNTRY_CODE = "de"
 
@@ -304,6 +305,111 @@ def build_results_from_df(df: pd.DataFrame) -> list[dict]:
             "deal_tag": clean_cell(row.iloc[deal_col])      if deal_col     < len(row) else "",
         })
     return results
+
+
+def extract_asin(url: str) -> str:
+    match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", url)
+    return match.group(1) if match else ""
+
+
+def parse_price_amount(price_text: str) -> tuple[str, float | None]:
+    text = clean_cell(price_text)
+    if not text or text == "\\":
+        return "", None
+    currency = "EUR" if "€" in text or "EUR" in text.upper() else ""
+    number_text = re.sub(r"[^0-9,\.]", "", text)
+    if not number_text:
+        return currency, None
+    if "," in number_text and "." in number_text:
+        number_text = number_text.replace(".", "").replace(",", ".")
+    elif "," in number_text:
+        number_text = number_text.replace(",", ".")
+    try:
+        return currency, float(number_text)
+    except ValueError:
+        return currency, None
+
+
+def build_model_group(model_name: str) -> str:
+    text = clean_cell(model_name).upper().replace(" ", "")
+    if not text:
+        return ""
+    if text.startswith("FPRO"):
+        size = re.search(r"(\d+)", text)
+        return f"FPro{size.group(1)}" if size else "FPro"
+    if text.startswith("F"):
+        size = re.search(r"(\d+)", text)
+        return f"F{size.group(1)}" if size else "F"
+    if text.startswith("MAX"):
+        size = re.search(r"(\d+)", text)
+        return f"Max{size.group(1)}" if size else "Max"
+    if text.startswith("O32"):
+        return "O32/SMPro"
+    if text.startswith("N32"):
+        return "N32"
+    if text.startswith("P37M"):
+        return "P37M"
+    if text.startswith("P37"):
+        return "P37"
+    return clean_cell(model_name).replace(" ", "")
+
+
+def export_price_outputs(df: pd.DataFrame, captured_at: datetime) -> tuple[Path, Path]:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    date_str = captured_at.strftime("%Y-%m-%d")
+    day_dir = OUTPUT_DIR / "prices" / f"date={date_str}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+
+    excel_path = OUTPUT_DIR / "latest.xlsx"
+    price_csv_path = day_dir / "prices.csv"
+
+    df.to_excel(excel_path, index=False)
+
+    price_col    = SCRAPER_CONFIG["price_column"]
+    seller_col   = price_col + 1
+    stock_col    = price_col + 2
+    delivery_col = price_col + 3
+    overtime_col = price_col + 4
+    basis_col    = price_col + 5
+    deal_col     = price_col + 6
+    url_col      = SCRAPER_CONFIG["url_column"]
+
+    rows = []
+    for _, row in df.iterrows():
+        url = normalize_url(row.iloc[url_col]) if url_col < len(row) else ""
+        if not url.startswith("http"):
+            continue
+        model_name = clean_cell(row.get("model", "")) or " ".join(
+            part for part in [clean_cell(row.get("Model", "")), clean_cell(row.get("Size", ""))] if part
+        )
+        price_text = clean_cell(row.iloc[price_col]) if price_col < len(row) else ""
+        currency, price_amount = parse_price_amount(price_text)
+        rows.append(
+            {
+                "date": date_str,
+                "captured_at": captured_at.isoformat(timespec="seconds"),
+                "marketplace": "DE",
+                "country_code": COUNTRY_CODE.upper(),
+                "brand": clean_cell(row.get("brand", "")),
+                "model_group": build_model_group(model_name),
+                "model_name": model_name,
+                "asin": extract_asin(url),
+                "url": url,
+                "price_text": price_text,
+                "price_amount": price_amount,
+                "currency": currency,
+                "seller": clean_cell(row.iloc[seller_col]) if seller_col < len(row) else "",
+                "stock": clean_cell(row.iloc[stock_col]) if stock_col < len(row) else "",
+                "delivery": clean_cell(row.iloc[delivery_col]) if delivery_col < len(row) else "",
+                "overtime": clean_cell(row.iloc[overtime_col]) if overtime_col < len(row) else "",
+                "basis_price": clean_cell(row.iloc[basis_col]) if basis_col < len(row) else "",
+                "deal_tag": clean_cell(row.iloc[deal_col]) if deal_col < len(row) else "",
+            }
+        )
+
+    pd.DataFrame(rows).to_csv(price_csv_path, index=False, encoding="utf-8-sig")
+    (day_dir / "prices.done").write_text(f"captured_at={captured_at.isoformat(timespec='seconds')}\n", encoding="utf-8")
+    return excel_path, price_csv_path
 
 # ===================== 浏览器 =====================
 def get_chrome_options() -> Options:
@@ -928,6 +1034,9 @@ def main():
 
     elapsed = (time.time() - start_time) / 60
     results = build_results_from_df(scraper.df)
+    excel_path, price_csv_path = export_price_outputs(scraper.df, datetime.now())
+    logger.info(f"Saved monitor workbook: {excel_path}")
+    logger.info(f"Saved standard price CSV: {price_csv_path}")
 
     title = f"德国 TV 巡店 {datetime.now().strftime('%Y/%m/%d %H:%M')}"
     send_feishu_report(results, title, elapsed)
