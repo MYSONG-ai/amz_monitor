@@ -329,14 +329,27 @@ def parse_price_amount(price_text: str) -> tuple[str, float | None]:
     number_text = re.sub(r"[^0-9,\.]", "", text)
     if not number_text:
         return currency, None
-    if "," in number_text and "." in number_text:
-        number_text = number_text.replace(".", "").replace(",", ".")
-    elif "," in number_text:
-        number_text = number_text.replace(",", ".")
+    number_text = normalize_price_number(number_text)
     try:
         return currency, float(number_text)
     except ValueError:
         return currency, None
+
+
+def normalize_price_number(number_text: str) -> str:
+    comma_pos = number_text.rfind(",")
+    dot_pos = number_text.rfind(".")
+    if comma_pos >= 0 and dot_pos >= 0:
+        if dot_pos > comma_pos:
+            return number_text.replace(",", "")
+        return number_text.replace(".", "").replace(",", ".")
+    if comma_pos >= 0:
+        tail_len = len(number_text) - comma_pos - 1
+        return number_text.replace(",", ".") if tail_len == 2 else number_text.replace(",", "")
+    if dot_pos >= 0:
+        tail_len = len(number_text) - dot_pos - 1
+        return number_text if tail_len == 2 else number_text.replace(".", "")
+    return number_text
 
 
 def build_model_group(model_name: str) -> str:
