@@ -421,11 +421,10 @@ def export_price_outputs(df: pd.DataFrame, captured_at: datetime) -> tuple[Path,
 def update_cumulative_prices(path: Path, today_df: pd.DataFrame, date_str: str) -> None:
     if path.exists():
         existing_df = pd.read_csv(path, encoding="utf-8-sig")
-        existing_df = existing_df[existing_df["date"].astype(str) != date_str]
         combined_df = pd.concat([existing_df, today_df], ignore_index=True)
     else:
         combined_df = today_df
-    combined_df = combined_df.sort_values(["date", "model_group", "model_name", "asin"]).reset_index(drop=True)
+    combined_df = combined_df.sort_values(["date", "captured_at", "model_group", "model_name", "asin"]).reset_index(drop=True)
     combined_df.to_csv(path, index=False, encoding="utf-8-sig")
 
 # ===================== 浏览器 =====================

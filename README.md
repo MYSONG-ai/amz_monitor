@@ -67,7 +67,7 @@ output/prices/date=YYYY-MM-DD/prices.csv
 output/prices/date=YYYY-MM-DD/prices.done
 ```
 
-`output/prices/prices.csv` is the cumulative standard file for the sales forecast project. It has one `date` column and replaces rows for the same date when the monitor runs again. Important columns:
+`output/prices/prices.csv` is the cumulative standard file for the sales forecast project. It has `date` and `captured_at` columns, and repeated runs on the same date are appended instead of overwritten. Important columns:
 
 ```text
 date,captured_at,marketplace,model_group,model_name,asin,url,price_text,price_amount,currency,seller,stock,delivery,basis_price,deal_tag
