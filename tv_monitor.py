@@ -591,13 +591,18 @@ def build_price_by_asin(df: pd.DataFrame) -> dict[str, object]:
         if not asin:
             continue
         price_text = clean_cell(row.iloc[price_col]) if price_col < len(row) else ""
-        _currency, price_amount = parse_price_amount(price_text)
+        currency, price_amount = parse_price_amount(price_text)
         if price_amount is not None:
-            price_by_asin[asin] = price_amount
+            price_by_asin[asin] = format_price_for_sheet(price_amount, currency)
             continue
         stock = clean_cell(row.iloc[stock_col]) if stock_col < len(row) else ""
         price_by_asin[asin] = stock or price_text
     return price_by_asin
+
+
+def format_price_for_sheet(price_amount: float, currency: str) -> str:
+    prefix = "€" if currency == "EUR" else ""
+    return f"{prefix}{price_amount:,.2f}"
 
 
 def next_price_column_index(header_row: list[str], first_price_index: int) -> int:
