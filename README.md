@@ -61,11 +61,13 @@ Each successful run now writes local output files:
 
 ```text
 output/latest.xlsx
+output/prices/prices.csv
+output/prices/prices.done
 output/prices/date=YYYY-MM-DD/prices.csv
 output/prices/date=YYYY-MM-DD/prices.done
 ```
 
-`prices.csv` is the standard file for the sales forecast project. Important columns:
+`output/prices/prices.csv` is the cumulative standard file for the sales forecast project. It has one `date` column and replaces rows for the same date when the monitor runs again. Important columns:
 
 ```text
 date,captured_at,marketplace,model_group,model_name,asin,url,price_text,price_amount,currency,seller,stock,delivery,basis_price,deal_tag
@@ -78,5 +80,5 @@ On the local sales forecast machine, sync from the Germany server with:
   -Date YYYY-MM-DD `
   -HostName 3.65.207.109 `
   -UserName ubuntu `
-  -RemotePriceCsv /home/ubuntu/amz_monitor/output/prices/date=YYYY-MM-DD/prices.csv
+  -RemotePriceCsv /home/ubuntu/amz_monitor/output/prices/prices.csv
 ```

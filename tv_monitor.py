@@ -357,11 +357,14 @@ def build_model_group(model_name: str) -> str:
 def export_price_outputs(df: pd.DataFrame, captured_at: datetime) -> tuple[Path, Path]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     date_str = captured_at.strftime("%Y-%m-%d")
+    prices_dir = OUTPUT_DIR / "prices"
     day_dir = OUTPUT_DIR / "prices" / f"date={date_str}"
+    prices_dir.mkdir(parents=True, exist_ok=True)
     day_dir.mkdir(parents=True, exist_ok=True)
 
     excel_path = OUTPUT_DIR / "latest.xlsx"
     price_csv_path = day_dir / "prices.csv"
+    cumulative_csv_path = prices_dir / "prices.csv"
 
     df.to_excel(excel_path, index=False)
 
@@ -407,9 +410,23 @@ def export_price_outputs(df: pd.DataFrame, captured_at: datetime) -> tuple[Path,
             }
         )
 
-    pd.DataFrame(rows).to_csv(price_csv_path, index=False, encoding="utf-8-sig")
+    prices_df = pd.DataFrame(rows)
+    prices_df.to_csv(price_csv_path, index=False, encoding="utf-8-sig")
+    update_cumulative_prices(cumulative_csv_path, prices_df, date_str)
     (day_dir / "prices.done").write_text(f"captured_at={captured_at.isoformat(timespec='seconds')}\n", encoding="utf-8")
-    return excel_path, price_csv_path
+    (prices_dir / "prices.done").write_text(f"captured_at={captured_at.isoformat(timespec='seconds')}\n", encoding="utf-8")
+    return excel_path, cumulative_csv_path
+
+
+def update_cumulative_prices(path: Path, today_df: pd.DataFrame, date_str: str) -> None:
+    if path.exists():
+        existing_df = pd.read_csv(path, encoding="utf-8-sig")
+        existing_df = existing_df[existing_df["date"].astype(str) != date_str]
+        combined_df = pd.concat([existing_df, today_df], ignore_index=True)
+    else:
+        combined_df = today_df
+    combined_df = combined_df.sort_values(["date", "model_group", "model_name", "asin"]).reset_index(drop=True)
+    combined_df.to_csv(path, index=False, encoding="utf-8-sig")
 
 # ===================== 浏览器 =====================
 def get_chrome_options() -> Options:
