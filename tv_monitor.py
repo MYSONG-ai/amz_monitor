@@ -86,7 +86,7 @@ SCRAPER_CONFIG = {
     "max_retries": 2,
     "url_column": 3,
     "price_column": 6,
-    "timeout": 15,
+    "timeout": 30,
 }
 
 # ===================== 飞书 API =====================
@@ -652,6 +652,10 @@ def get_chrome_options() -> Options:
     opts.add_argument(f"--user-agent={random.choice(USER_AGENTS)}")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--disable-default-apps")
+    opts.add_argument("--disable-sync")
+    opts.add_argument("--metrics-recording-only")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--no-proxy-server")
     opts.add_argument("--remote-debugging-port=0")
@@ -679,15 +683,8 @@ def create_driver() -> webdriver.Chrome:
 
 # ===================== Browser warm-up =====================
 def warm_browser_session(driver, country_code: str) -> bool:
-    try:
-        start_url = f"https://www.amazon.{country_code}/?language=en_GB"
-        logger.info("Using fresh Chrome session")
-        driver.get(start_url)
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        return True
-    except Exception as e:
-        logger.error(f"浏览器预热失败: {e}")
-        return False
+    logger.info("Using fresh Chrome session")
+    return True
 
 # ===================== 页面信息提取 =====================
 def is_error_page(driver) -> bool:
@@ -1117,10 +1114,11 @@ class AmazonScraper:
         try:
             driver = create_driver()
             if not warm_browser_session(driver, self.country_code):
-                logger.error(f"线程 {thread_id}, URL {index}: 浏览器预热失败，跳过")
+                logger.error(f"线程 {thread_id}, URL {index}: 浏览器启动失败，跳过")
                 return results
 
             try:
+                logger.info(f"URL {index}: start {url}")
                 driver.get(url)
                 if is_error_page(driver):
                     driver.refresh()
