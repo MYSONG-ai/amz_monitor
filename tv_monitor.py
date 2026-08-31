@@ -84,6 +84,7 @@ BROWSER_CONFIG = {
 SCRAPER_CONFIG = {
     "max_workers": 1,
     "max_retries": 2,
+    "restart_every": 3,
     "url_column": 3,
     "price_column": 6,
     "timeout": 30,
@@ -1100,7 +1101,7 @@ class AmazonScraper:
         logger.warning(f"URL {index}: 未找到价格")
         return "\\"
 
-    def process_single_url(self, thread_id, index, url, retry_count):
+    def process_single_url(self, driver, thread_id, index, url, retry_count):
         results = {}
         pc = SCRAPER_CONFIG["price_column"]
         seller_col   = pc + 1
@@ -1110,13 +1111,7 @@ class AmazonScraper:
         basis_col    = pc + 5
         deal_col     = pc + 6
 
-        driver = None
         try:
-            driver = create_driver()
-            if not warm_browser_session(driver, self.country_code):
-                logger.error(f"线程 {thread_id}, URL {index}: 浏览器启动失败，跳过")
-                return results
-
             try:
                 logger.info(f"URL {index}: start {url}")
                 driver.get(url)
@@ -1194,15 +1189,27 @@ class AmazonScraper:
                     self.df.iloc[index, basis_col] = ""
                     self.df.iloc[index, deal_col] = ""
         finally:
-            if driver:
-                driver.quit()
+            pass
         return results
 
     def process_urls_batch(self, thread_data):
         thread_id, urls_batch, _ = thread_data
         results = {}
-        for index, url, retry_count in urls_batch:
-            results.update(self.process_single_url(thread_id, index, url, retry_count))
+        restart_every = max(1, SCRAPER_CONFIG.get("restart_every", 3))
+
+        for offset in range(0, len(urls_batch), restart_every):
+            chunk = urls_batch[offset:offset + restart_every]
+            driver = None
+            try:
+                driver = create_driver()
+                if not warm_browser_session(driver, self.country_code):
+                    logger.error(f"线程 {thread_id}: 浏览器启动失败，跳过本组 URL")
+                    continue
+                for index, url, retry_count in chunk:
+                    results.update(self.process_single_url(driver, thread_id, index, url, retry_count))
+            finally:
+                if driver:
+                    driver.quit()
         return results
 
     def run(self):
