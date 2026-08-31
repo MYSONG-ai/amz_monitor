@@ -1,6 +1,6 @@
 # TV Store Monitor
 
-德国 Amazon TV 巡店脚本。使用 Selenium 直接启动一个新的 Chrome 会话，不导入 Chrome profile，不读取 cookie。
+意大利 Amazon TV 巡店脚本。使用 Selenium 直接启动一个新的 Chrome 会话，不导入 Chrome profile，不读取 cookie。
 
 ## Files
 

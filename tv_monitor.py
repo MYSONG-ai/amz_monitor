@@ -33,7 +33,7 @@ SCRIPT_DIR  = Path(__file__).parent
 INPUT_FILE  = SCRIPT_DIR / "input" / "de_xiaomi_TV.xlsx"
 OUTPUT_DIR  = SCRIPT_DIR / "output"
 
-COUNTRY_CODE = "de"
+COUNTRY_CODE = "it"
 
 
 def load_local_env():
@@ -1252,7 +1252,7 @@ def main():
     start_time = time.time()
     now_str = datetime.now().strftime("%Y/%m/%d %H:%M")
     logger.info("Using fresh Chrome session")
-    logger.info(f"===== 小米德国 TV 巡店开始 {now_str} =====")
+    logger.info(f"===== 小米意大利 TV 巡店开始 {now_str} =====")
 
     df = load_input_data()
     df = prepare_dataframe(df)
@@ -1273,7 +1273,7 @@ def main():
     except Exception:
         logger.exception("Failed to write Feishu price calendar sheet")
 
-    title = f"德国 TV 巡店 {datetime.now().strftime('%Y/%m/%d %H:%M')}"
+    title = f"意大利 TV 巡店 {datetime.now().strftime('%Y/%m/%d %H:%M')}"
     send_feishu_report(results, title, elapsed)
 
     logger.info(f"===== 全部完成，耗时 {elapsed:.1f} 分钟 =====")
@@ -1285,7 +1285,7 @@ if __name__ == "__main__":
     except Exception as exc:
         logger.exception("Xiaomi monitor failed")
         try:
-            send_feishu_message(f"小米德国 TV 巡店运行失败：{exc}")
+            send_feishu_message(f"小米意大利 TV 巡店运行失败：{exc}")
         except Exception:
             logger.exception("Failed to send Feishu failure message")
         raise
