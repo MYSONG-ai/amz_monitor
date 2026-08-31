@@ -1229,6 +1229,25 @@ class AmazonScraper:
             for i in range(0, len(all_tasks), batch_size)
         ]
 
+        if max_workers == 1:
+            pending = all_tasks
+            round_no = 0
+            while pending:
+                self.retry_queue = queue.Queue()
+                batch_result = self.process_urls_batch((round_no, pending, None))
+                self.results.update(batch_result)
+                for idx, res in batch_result.items():
+                    self.df.iloc[idx, pc] = res
+                logger.info(f"已处理 {len(self.results)} 个 URL")
+
+                retry_batch = []
+                while not self.retry_queue.empty():
+                    retry_batch.append(self.retry_queue.get())
+                pending = retry_batch
+                round_no += 1
+            logger.info(f"全部 URL 处理完成，共 {len(self.results)} 条")
+            return self.results
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(self.process_urls_batch, b): b for b in batches}
 
