@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ===================== 路径配置 =====================
 SCRIPT_DIR  = Path(__file__).parent
-INPUT_FILE  = SCRIPT_DIR / "input" / "de_xiaomi_TV.xlsx"
+INPUT_FILE  = SCRIPT_DIR / "input" / "it_xiaomi_TV.xlsx"
 OUTPUT_DIR  = SCRIPT_DIR / "output"
 
 COUNTRY_CODE = "it"
@@ -1103,101 +1103,108 @@ class AmazonScraper:
         logger.warning(f"URL {index}: 未找到价格")
         return "\\"
 
+    def process_single_url(self, thread_id, index, url, retry_count):
+        results = {}
+        pc = SCRAPER_CONFIG["price_column"]
+        seller_col   = pc + 1
+        stock_col    = pc + 2
+        delivery_col = pc + 3
+        overtime_col = pc + 4
+        basis_col    = pc + 5
+        deal_col     = pc + 6
+
+        driver = None
+        try:
+            driver = create_driver()
+            if not warm_browser_session(driver, self.country_code):
+                logger.error(f"线程 {thread_id}, URL {index}: 浏览器预热失败，跳过")
+                return results
+
+            try:
+                driver.get(url)
+                if is_error_page(driver):
+                    driver.refresh()
+                    try:
+                        WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                    except TimeoutException:
+                        if retry_count < SCRAPER_CONFIG["max_retries"]:
+                            self.retry_queue.put((index, url, retry_count + 1))
+                        else:
+                            self.df.iloc[index, pc] = "访问失败"
+                        return results
+
+                stock = get_stock_info(driver)
+                if stock in ("缺货", "应该无库存"):
+                    results[index] = "\\"
+                    self.df.iloc[index, pc]           = "\\"
+                    self.df.iloc[index, seller_col]   = ""
+                    self.df.iloc[index, stock_col]    = stock
+                    self.df.iloc[index, delivery_col] = ""
+                    self.df.iloc[index, overtime_col] = ""
+                    self.df.iloc[index, basis_col]    = get_basis_price_info(driver)
+                    self.df.iloc[index, deal_col]     = get_deal_tag_info(driver)
+                    return results
+
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "span.a-price-whole"))
+                )
+                price = self.extract_price(driver, index)
+                results[index] = price
+                self.df.iloc[index, pc]        = price
+                self.df.iloc[index, stock_col] = stock
+
+                try:
+                    self.df.iloc[index, seller_col] = get_seller_info(driver)
+                except Exception:
+                    self.df.iloc[index, seller_col] = ""
+
+                try:
+                    raw = get_delivery_info(driver)
+                    date = parse_delivery_date(raw) if isinstance(raw, str) else None
+                    d_status, overtime = calculate_delivery_status(date, self.country_code)
+                    self.df.iloc[index, delivery_col] = d_status
+                    self.df.iloc[index, overtime_col] = overtime
+                except Exception:
+                    self.df.iloc[index, delivery_col] = ""
+                    self.df.iloc[index, overtime_col] = ""
+
+                try:
+                    self.df.iloc[index, basis_col] = get_basis_price_info(driver)
+                except Exception:
+                    self.df.iloc[index, basis_col] = "无basis price"
+
+                try:
+                    self.df.iloc[index, deal_col] = get_deal_tag_info(driver)
+                except Exception:
+                    self.df.iloc[index, deal_col] = ""
+
+            except TimeoutException:
+                if retry_count < SCRAPER_CONFIG["max_retries"]:
+                    self.retry_queue.put((index, url, retry_count + 1))
+                else:
+                    self.df.iloc[index, pc] = "\\"
+                    self.df.iloc[index, basis_col] = ""
+                    self.df.iloc[index, deal_col] = ""
+            except Exception as e:
+                logger.warning(f"线程 {thread_id}, URL {index}: {e}")
+                if retry_count < SCRAPER_CONFIG["max_retries"]:
+                    self.retry_queue.put((index, url, retry_count + 1))
+                else:
+                    self.df.iloc[index, pc] = "\\"
+                    self.df.iloc[index, basis_col] = ""
+                    self.df.iloc[index, deal_col] = ""
+        finally:
+            if driver:
+                driver.quit()
+        return results
+
     def process_urls_batch(self, thread_data):
         thread_id, urls_batch, _ = thread_data
         results = {}
-        driver = create_driver()
-        try:
-            if not warm_browser_session(driver, self.country_code):
-                logger.error(f"线程 {thread_id}: 浏览器预热失败，跳过")
-                return results
-
-            pc = SCRAPER_CONFIG["price_column"]
-            seller_col   = pc + 1
-            stock_col    = pc + 2
-            delivery_col = pc + 3
-            overtime_col = pc + 4
-            basis_col    = pc + 5
-            deal_col     = pc + 6
-
-            for index, url, retry_count in urls_batch:
-                try:
-                    driver.get(url)
-                    if is_error_page(driver):
-                        driver.refresh()
-                        try:
-                            WebDriverWait(driver, 5).until(
-                                EC.presence_of_element_located((By.TAG_NAME, "body"))
-                            )
-                        except TimeoutException:
-                            if retry_count < SCRAPER_CONFIG["max_retries"]:
-                                self.retry_queue.put((index, url, retry_count + 1))
-                            else:
-                                self.df.iloc[index, pc] = "访问失败"
-                            continue
-
-                    stock = get_stock_info(driver)
-                    if stock in ("缺货", "应该无库存"):
-                        results[index] = "\\"
-                        self.df.iloc[index, pc]           = "\\"
-                        self.df.iloc[index, seller_col]   = ""
-                        self.df.iloc[index, stock_col]    = stock
-                        self.df.iloc[index, delivery_col] = ""
-                        self.df.iloc[index, overtime_col] = ""
-                        self.df.iloc[index, basis_col]    = get_basis_price_info(driver)
-                        self.df.iloc[index, deal_col]     = get_deal_tag_info(driver)
-                        continue
-
-                    WebDriverWait(driver, 5).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "span.a-price-whole"))
-                    )
-                    price = self.extract_price(driver, index)
-                    results[index] = price
-                    self.df.iloc[index, pc]        = price
-                    self.df.iloc[index, stock_col] = stock
-
-                    try:
-                        self.df.iloc[index, seller_col] = get_seller_info(driver)
-                    except Exception:
-                        self.df.iloc[index, seller_col] = ""
-
-                    try:
-                        raw = get_delivery_info(driver)
-                        date = parse_delivery_date(raw) if isinstance(raw, str) else None
-                        d_status, overtime = calculate_delivery_status(date, self.country_code)
-                        self.df.iloc[index, delivery_col] = d_status
-                        self.df.iloc[index, overtime_col] = overtime
-                    except Exception:
-                        self.df.iloc[index, delivery_col] = ""
-                        self.df.iloc[index, overtime_col] = ""
-
-                    try:
-                        self.df.iloc[index, basis_col] = get_basis_price_info(driver)
-                    except Exception:
-                        self.df.iloc[index, basis_col] = "无basis price"
-
-                    try:
-                        self.df.iloc[index, deal_col] = get_deal_tag_info(driver)
-                    except Exception:
-                        self.df.iloc[index, deal_col] = ""
-
-                except TimeoutException:
-                    if retry_count < SCRAPER_CONFIG["max_retries"]:
-                        self.retry_queue.put((index, url, retry_count + 1))
-                    else:
-                        self.df.iloc[index, pc] = "\\"
-                        self.df.iloc[index, basis_col] = ""
-                        self.df.iloc[index, deal_col] = ""
-                except Exception as e:
-                    logger.warning(f"线程 {thread_id}, URL {index}: {e}")
-                    if retry_count < SCRAPER_CONFIG["max_retries"]:
-                        self.retry_queue.put((index, url, retry_count + 1))
-                    else:
-                        self.df.iloc[index, pc] = "\\"
-                        self.df.iloc[index, basis_col] = ""
-                        self.df.iloc[index, deal_col] = ""
-        finally:
-            driver.quit()
+        for index, url, retry_count in urls_batch:
+            results.update(self.process_single_url(thread_id, index, url, retry_count))
         return results
 
     def run(self):
